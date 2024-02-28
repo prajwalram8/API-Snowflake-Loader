@@ -9,7 +9,7 @@ from credentials.credential_manager import CredentialManager
 from db.snowflake_loader import DataLoader
 
 # Initializing helper classes and functions
-logger = setup_logging(__name__)
+logger = setup_logging("xpand_retail")
 
 class XpandRetail():
     def __init__(self):
@@ -42,7 +42,7 @@ class XpandRetail():
         # Initializing class attributes
         self.timestamp_run = dt.datetime.now().strftime("%Y%m%d%H%M%S")
         self.startDate = dt.datetime.strptime(self.state.get_last_state(),"%Y-%m-%d").date()
-        self.endDate = dt.datetime.now().date()
+        self.endDate = (dt.datetime.now() - dt.timedelta(days=1)).date()
 
 
     def get_auth_code(self):
@@ -129,7 +129,7 @@ class XpandRetail():
         
         # Get store info
         store_info = self.get_store_info(endpoint='api/v1/base/plazaInfo', method='GET')
-        store_info = self.data_processor.process_data(store_info['data'])
+        store_info = self.data_processor.normalize_json_to_dataframe(store_info['data'])
         store_info.to_csv(
             os.path.join(
                 self.project_dir.get_directories('store_info'),
@@ -149,7 +149,7 @@ class XpandRetail():
                     method='GET'
                     )
             )
-        store_entrance_info = self.data_processor.list_dict_to_pd(list_dict=store_entrance_info, key='data')
+        store_entrance_info = self.data_processor.list_json_to_dataframe(list_dict=store_entrance_info, key='data')
         store_entrance_info.to_csv(
             os.path.join(
                 self.project_dir.get_directories('store_entrance_info'),
@@ -158,11 +158,11 @@ class XpandRetail():
         )
         self.preprocess_and_upload(name='store_entrance_info', load_type='truncate')
 
-        while self.startDate < self.endDate:
+        # Extract Daily Hourly counts
+        while self.startDate <= self.endDate:
             store_counts = []
             store_cust_seg_counts = []
 
-            # Need to define logic to assign start date and enddate
             startTime =  dt.datetime.combine(self.startDate, dt.time(0,0,0)).strftime("%Y-%m-%d %H:%M:%S")
             endTime = dt.datetime.combine(self.startDate, dt.time(23,59,59)).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -192,8 +192,8 @@ class XpandRetail():
                 )
 
             # converting list dict into single data frame
-            store_counts = self.data_processor.list_dict_to_pd(list_dict=store_counts, key='data')
-            store_cust_seg_counts = self.data_processor.list_dict_to_pd(list_dict=store_cust_seg_counts, key='data')
+            store_counts = self.data_processor.list_json_to_dataframe(list_dict=store_counts, key='data')
+            store_cust_seg_counts = self.data_processor.list_json_to_dataframe(list_dict=store_cust_seg_counts, key='data')
 
             # staging the dataframe into persistent memory
             store_counts.to_csv(
@@ -220,7 +220,7 @@ class XpandRetail():
         self.preprocess_and_upload(name='store_cust_seg_counts', load_type='insert')
         
         # update the state
-        self.state.update_state(last_run_date=self.startDate.strftime("%Y-%m-%d"))
+        self.state.update_state(last_run_date=self.endDate.strftime("%Y-%m-%d"))
         self.local_stage_orchestrator.delete_folder_contents(folder_path=self.project_dir.name)
         logger.info("Extraction job completed successfully")
 
@@ -231,3 +231,12 @@ if __name__ == "__main__":
     # Call API for data
     xpand_retail_api = XpandRetail()
     xpand_retail_api.extract_and_stage()
+    # print(
+    #     xpand_retail_api.get_store_count(
+    #                     store_id='1d5e7460-aeed-11ee-951d-7a808707fe68',
+    #                     startTime=dt.datetime.combine(dt.date(2024,2,14), dt.time(0,0,0)).strftime("%Y-%m-%d %H:%M:%S"),
+    #                     endTime=dt.datetime.combine(dt.date(2024,2,14), dt.time(23,59,59)).strftime("%Y-%m-%d %H:%M:%S"),
+    #                     endpoint='api/v1/face/storeCountingDataHourly',
+    #                     method='GET'
+    #                 )
+    # )

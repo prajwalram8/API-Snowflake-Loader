@@ -1,25 +1,68 @@
 # data_processor/data_processor.py
+import os
+import csv
+import glob
 import pandas as pd
 from utils.logger import setup_logging 
-import csv
-import os
 
 logger = setup_logging("data_processor")
 
 class DataProcessor:
-    def process_data(self, json_data, key=None):
+    """
+    Object to process response data from an API call into a format suitable for data analysis.
+    """
+
+    @staticmethod
+    def normalize_json_to_dataframe(json_data, key=None):
         """
-        Process the given data (e.g., from an API response) to match the target Snowflake schema.
-        
-        :param data: dict or list - The data to process.
-        :return: list of tuples - The processed data in a format ready for insertion into Snowflake.
+        Normalize nested JSON data into a flat table structure.
+
+        :param json_data: dict or list - The JSON data to normalize.
+        :param key: str or None - Optional key to specify the path to the nested element to normalize.
+        :return: DataFrame - The normalized data as a Pandas DataFrame.
         """
         return pd.json_normalize(json_data, record_path=key)
     
-    def list_dict_to_pd(self, list_dict:list, key:str=None) -> pd.DataFrame:
-        list_dict = [self.process_data(json_data=dict_unit, key=key) for dict_unit in list_dict if key in dict_unit]
-        return pd.concat(list_dict, axis=0)
+    def list_json_to_dataframe(self, list_dict, key=None):
+        """
+        Convert a list of dictionaries to a Pandas DataFrame.
+
+        :param list_dict: list of dicts - The list of dictionaries to convert.
+        :param key: str or None - Optional key to specify which nested dictionaries to convert.
+        :return: DataFrame - The concatenated DataFrame from the list of dictionaries.
+        """
+        frames = [self.normalize_json_to_dataframe(dict_unit, key=key) for dict_unit in list_dict if key is None or key in dict_unit]
+        return pd.concat(frames, ignore_index=True)
     
+
+class ColumnMismatch:
+    """
+    Class to log column mismatch
+    """
+    def __init__(self, column_context):
+        self.column_context = column_context
+
+    def log_column_mismatch(self, df, file_name):
+        """
+        Log the column names if they match with the reference DataFrame.
+        If there is a mismatch, log the details of the CSV file.
+        """
+        df_columns = set(df.columns)
+        reference_columns = self.column_context
+
+        if df_columns == reference_columns:
+            pass
+        else:
+            extra_columns = df_columns - reference_columns
+            missing_columns = reference_columns - df_columns
+
+            if extra_columns:
+                reference_columns = reference_columns.update(extra_columns)
+                logger.warning(f"Extra columns in file {file_name}: {', '.join(extra_columns)}")
+            if missing_columns:
+                logger.warning(f"Missing columns in file {file_name}: {', '.join(missing_columns)}")
+            
+        return None
 
 
 class LocalStageOrchestrator:
@@ -35,11 +78,10 @@ class LocalStageOrchestrator:
         Clean the DataFrame: replace 'NaT' values, convert datetime columns to strings,
         and convert columns with more than one type to string
         """
-        # Find columns containing 'NaT' values
-        for column, data_type in df.dtypes.items():
-            # Replace 'NaT' values with None and convert datetime columns to strings
-            if str(data_type) in ['datetime64[ns]', '<M8[ns]']:
-                df[column] = df[column].apply(lambda x: x.strftime(self.datetime_format) if pd.notnull(x) else self.sentinel_value)
+
+        # Vectorized operation for datetime columns conversion and 'NaT' replacement
+        datetime_cols = df.select_dtypes(include=['datetime64[ns]', '<M8[ns]']).columns
+        df[datetime_cols] = df[datetime_cols].apply(lambda x: x.dt.strftime(self.datetime_format).fillna(self.sentinel_value), axis=1)  
 
         # Column level adjustments
         for column in df.columns:
@@ -83,34 +125,6 @@ class LocalStageOrchestrator:
             logger.error(f"Error while saving DataFrame to CSV: {e}")
             return False
         
-
-    def log_column_mismatch(self, df, file_name):
-        """
-        Log the column names if they match with the reference DataFrame.
-        If there is a mismatch, log the details of the CSV file.
-        """
-        # Get the column names of the DataFrame and the reference DataFrame
-        if self.column_context == None:
-            self.column_context = set(df.columns)
-            return None
-        else:
-            df_columns = set(df.columns)
-            reference_columns = self.column_context
-
-            if df_columns == reference_columns:
-                pass
-            else:
-                extra_columns = df_columns - reference_columns
-                missing_columns = reference_columns - df_columns
-
-                if extra_columns:
-                    reference_columns = reference_columns.update(extra_columns)
-                    logger.warning(f"Extra columns in file {file_name}: {', '.join(extra_columns)}")
-                if missing_columns:
-                    logger.warning(f"Missing columns in file {file_name}: {', '.join(missing_columns)}")
-                
-            return None
-        
     def generate_col_definitions(self, df):
         column_definitions = [f'"{col}" {self.map_dtype_to_snowflake(dtype)}' for col, dtype in zip(df.columns, df.dtypes)]
         return ', '.join(column_definitions)
@@ -129,7 +143,7 @@ class LocalStageOrchestrator:
         """
         Process Excel files: read the files, clean the data, and save it as CSV files
         """
-        for file_name in os.listdir(input_location):
+        for i, file_name in enumerate(os.listdir(input_location), start=1):
             file_path = os.path.join(input_location, file_name)
             try:
                 if (file_name.endswith('.xlsx') or file_name.endswith('.XLSX') or file_name.endswith('.xls')) and os.path.isfile(file_path):
@@ -139,12 +153,19 @@ class LocalStageOrchestrator:
                     df = pd.read_csv(file_path)
             except Exception as e:
                 logger.error(f"Error while reading the files in the input folder: {e}")
+                raise
+
             # Log Column mismatch if any
-            self.log_column_mismatch(df, file_name)
+            if i == 1:
+                log_col_mismatch = ColumnMismatch(column_context=set(df.columns))
+            log_col_mismatch.log_column_mismatch(df, file_name)
+            
             # Clean the DataFrame
             df = self.preprocess(df)
+            
             # Add Column for file identifier
             df['File Name'] = file_name
+            
             # Save the DataFrame as a CSV file
             stage_file_path = os.path.join(self.staging_location, f'{os.path.splitext(file_name)[0]}.csv')
             self.stage_locally(df, stage_file_path)
