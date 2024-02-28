@@ -220,7 +220,7 @@ class XpandRetail():
         self.preprocess_and_upload(name='store_cust_seg_counts', load_type='insert')
         
         # update the state
-        self.state.update_state(last_run_date=self.endDate.strftime("%Y-%m-%d"))
+        self.state.update_state(last_run_date=self.startDate.strftime("%Y-%m-%d"))
         self.local_stage_orchestrator.delete_folder_contents(folder_path=self.project_dir.name)
         logger.info("Extraction job completed successfully")
 
