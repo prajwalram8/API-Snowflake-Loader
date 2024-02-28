@@ -144,8 +144,6 @@ class LocalStageOrchestrator:
         Process Excel files: read the files, clean the data, and save it as CSV files
         """
         for i, file_name in enumerate(os.listdir(input_location), start=1):
-            if i == 1:
-                log_col_mismatch = ColumnMismatch(column_context=set(df.columns))
             file_path = os.path.join(input_location, file_name)
             try:
                 if (file_name.endswith('.xlsx') or file_name.endswith('.XLSX') or file_name.endswith('.xls')) and os.path.isfile(file_path):
@@ -158,7 +156,9 @@ class LocalStageOrchestrator:
                 raise
 
             # Log Column mismatch if any
-            log_col_mismatch(df, file_name)
+            if i == 1:
+                log_col_mismatch = ColumnMismatch(column_context=set(df.columns))
+            log_col_mismatch.log_column_mismatch(df, file_name)
             
             # Clean the DataFrame
             df = self.preprocess(df)

@@ -159,7 +159,7 @@ class XpandRetail():
         self.preprocess_and_upload(name='store_entrance_info', load_type='truncate')
 
         # Extract Daily Hourly counts
-        while self.startDate < self.endDate:
+        while self.startDate <= self.endDate:
             store_counts = []
             store_cust_seg_counts = []
 
@@ -220,7 +220,7 @@ class XpandRetail():
         self.preprocess_and_upload(name='store_cust_seg_counts', load_type='insert')
         
         # update the state
-        self.state.update_state(last_run_date=self.startDate.strftime("%Y-%m-%d"))
+        self.state.update_state(last_run_date=self.endDate.strftime("%Y-%m-%d"))
         self.local_stage_orchestrator.delete_folder_contents(folder_path=self.project_dir.name)
         logger.info("Extraction job completed successfully")
 
@@ -231,3 +231,12 @@ if __name__ == "__main__":
     # Call API for data
     xpand_retail_api = XpandRetail()
     xpand_retail_api.extract_and_stage()
+    # print(
+    #     xpand_retail_api.get_store_count(
+    #                     store_id='1d5e7460-aeed-11ee-951d-7a808707fe68',
+    #                     startTime=dt.datetime.combine(dt.date(2024,2,14), dt.time(0,0,0)).strftime("%Y-%m-%d %H:%M:%S"),
+    #                     endTime=dt.datetime.combine(dt.date(2024,2,14), dt.time(23,59,59)).strftime("%Y-%m-%d %H:%M:%S"),
+    #                     endpoint='api/v1/face/storeCountingDataHourly',
+    #                     method='GET'
+    #                 )
+    # )
